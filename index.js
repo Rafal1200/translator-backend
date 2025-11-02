@@ -7,6 +7,8 @@ import OpenAI from "openai";
 
 const app = express();
 app.use(cors());
+// JSON do endpointów translate/tts
+app.use(express.json({ limit: "2mb" }));
 
 // zapis plików tymczasowych
 const upload = multer({ dest: "uploads/" });
@@ -41,6 +43,62 @@ app.post("/api/transcribe", upload.any(), async (req, res) => {
   } catch (err) {
     console.error("TRANSCRIBE ERROR:", err);
     res.status(500).json({ error: "Transcription failed" });
+  }
+});
+
+// === /api/translate ===
+// body: { direction: "PL->ES" | "ES->PL", text: string }
+app.post("/api/translate", async (req, res) => {
+  try {
+    const { direction, text } = req.body || {};
+    if (!text || !direction) {
+      return res.status(400).json({ error: "Missing text/direction" });
+    }
+
+    const system =
+      direction === "PL->ES"
+        ? "Translate from Polish to Spanish. Return only the translation."
+        : "Translate from Spanish to Polish. Return only the translation.";
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: text }
+      ],
+      temperature: 0.2
+    });
+
+    const translation =
+      completion.choices?.[0]?.message?.content?.trim() || "";
+    res.json({ translation });
+  } catch (err) {
+    console.error("TRANSLATE ERROR:", err);
+    res.status(500).json({ error: "Translation failed" });
+  }
+});
+
+// === /api/tts ===
+// body: { text: string, voice?: string }
+// Zwraca audio/mp3
+app.post("/api/tts", async (req, res) => {
+  try {
+    const { text, voice = "alloy" } = req.body || {};
+    if (!text) return res.status(400).json({ error: "Missing text" });
+
+    const speech = await client.audio.speech.create({
+      model: "gpt-4o-mini-tts", // alternatywnie: "tts-1"
+      voice,
+      input: text,
+      format: "mp3"
+    });
+
+    const buffer = Buffer.from(await speech.arrayBuffer());
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(buffer);
+  } catch (err) {
+    console.error("TTS ERROR:", err);
+    res.status(500).json({ error: "TTS failed" });
   }
 });
 
