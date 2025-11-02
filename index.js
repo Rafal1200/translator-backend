@@ -26,13 +26,17 @@ app.post("/api/transcribe", upload.any(), async (req, res) => {
     const f = (req.files && req.files[0]) || null;
     if (!f) return res.status(400).json({ error: "No audio file" });
 
+    // Dodaj rozszerzenie, żeby OpenAI wiedziało, że to webm
+    const renamedPath = f.path + ".webm";
+    fs.renameSync(f.path, renamedPath);
+
     const result = await client.audio.transcriptions.create({
-      file: fs.createReadStream(f.path),
+      file: fs.createReadStream(renamedPath),
       model: "whisper-1"
     });
 
-    // sprzątanie pliku tymczasowego
-    fs.unlink(f.path, () => {});
+    // Sprzątanie pliku tymczasowego
+    fs.unlink(renamedPath, () => {});
     res.json({ text: result.text ?? "", language: result.language ?? "" });
   } catch (err) {
     console.error("TRANSCRIBE ERROR:", err);
