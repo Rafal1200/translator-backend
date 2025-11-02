@@ -7,29 +7,42 @@ import OpenAI from "openai";
 
 const app = express();
 app.use(cors());
-// JSON do endpointów translate/tts
 app.use(express.json({ limit: "2mb" }));
 
-// zapis plików tymczasowych
+// zapisywanie plików tymczasowych
 const upload = multer({ dest: "uploads/" });
 
-// klient OpenAI z klucza w Render (Environment → OPENAI_API_KEY)
+// konfiguracja klienta OpenAI
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// healthcheck (do szybkiego testu w przeglądarce)
+// healthcheck
 app.get("/", (_req, res) => {
   res.json({ ok: true, msg: "translator-backend live" });
 });
 
 // === /api/transcribe ===
-// Przyjmij JEDEN plik audio niezależnie od nazwy pola (file/audio) – prościej dla frontu
+// przyjmuje 1 plik audio (dowolny format obsługiwany przez OpenAI)
 app.post("/api/transcribe", upload.any(), async (req, res) => {
   try {
     const f = (req.files && req.files[0]) || null;
     if (!f) return res.status(400).json({ error: "No audio file" });
 
-    // Dodaj rozszerzenie, żeby OpenAI wiedziało, że to webm
-    const renamedPath = f.path + ".webm";
+    // ustal rozszerzenie na podstawie mimetype
+    const mime = (f.mimetype || "").toLowerCase();
+    let ext = "";
+    if (mime.includes("webm")) ext = "webm";
+    else if (mime.includes("wav")) ext = "wav";
+    else if (mime.includes("mp4") || mime.includes("m4a") || mime.includes("mpeg") || mime.includes("mpga"))
+      ext = "mp4";
+    else if (mime.includes("ogg") || mime.includes("oga")) ext = "ogg";
+    else if (mime.includes("mp3")) ext = "mp3";
+    else {
+      const m = (f.originalname || "").match(/\.(\w+)$/);
+      ext = m ? m[1] : "webm";
+    }
+
+    // zmiana nazwy pliku z odpowiednim rozszerzeniem
+    const renamedPath = `${f.path}.${ext}`;
     fs.renameSync(f.path, renamedPath);
 
     const result = await client.audio.transcriptions.create({
@@ -37,17 +50,18 @@ app.post("/api/transcribe", upload.any(), async (req, res) => {
       model: "whisper-1"
     });
 
-    // Sprzątanie pliku tymczasowego
     fs.unlink(renamedPath, () => {});
     res.json({ text: result.text ?? "", language: result.language ?? "" });
   } catch (err) {
     console.error("TRANSCRIBE ERROR:", err);
-    res.status(500).json({ error: "Transcription failed" });
+    res.status(500).json({
+      error: "Transcription failed",
+      detail: err?.message || "Unknown error"
+    });
   }
 });
 
 // === /api/translate ===
-// body: { direction: "PL->ES" | "ES->PL", text: string }
 app.post("/api/translate", async (req, res) => {
   try {
     const { direction, text } = req.body || {};
@@ -79,15 +93,13 @@ app.post("/api/translate", async (req, res) => {
 });
 
 // === /api/tts ===
-// body: { text: string, voice?: string }
-// Zwraca audio/mp3
 app.post("/api/tts", async (req, res) => {
   try {
     const { text, voice = "alloy" } = req.body || {};
     if (!text) return res.status(400).json({ error: "Missing text" });
 
     const speech = await client.audio.speech.create({
-      model: "gpt-4o-mini-tts", // alternatywnie: "tts-1"
+      model: "gpt-4o-mini-tts",
       voice,
       input: text,
       format: "mp3"
